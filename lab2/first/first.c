@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 int main(int argc, char *argv[]) {
+  printf("1. \n");
     int totalElements = 100000;
     int userOption;
 

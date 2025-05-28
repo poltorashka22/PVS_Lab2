@@ -4,6 +4,7 @@
 #include <omp.h>
 #include <unistd.h>
 
+
 void exchangeElements(double* first, double* second) {
     double temporary = *first;
     *first = *second;
@@ -50,6 +51,7 @@ void parallelQuickSort(double* data, int startIndex, int endIndex) {
 }
 
 int main(int argc, char* argv[]) {
+    printf("2. \n");
     int elementCount = 100000;
     int userOption;
 
