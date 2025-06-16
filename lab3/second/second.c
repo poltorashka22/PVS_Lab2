@@ -1,100 +1,142 @@
+
 #include <stdio.h>
 #include <stdlib.h>
-#include <omp.h>
-#include <sys/time.h>
+#include <time.h>
+#include <unistd.h>
+#include <mpi.h>
 
-int is_sorted(int *arr, int n) {
-    for (int i = 1; i < n; i++) {
-        if (arr[i-1] > arr[i]) {
-            return 0;
-        }
-    }
-    return 1;
+void exchangeElements(double* first, double* second) {
+    double temporary = *first;
+    *first = *second;
+    *second = temporary;
 }
 
-void bubble_sort(int *arr, int n) {
-    int i, j, temp;
-    for (i = 0; i < n-1; i++) {
-        for (j = 0; j < n-i-1; j++) {
-            if (arr[j] > arr[j+1]) {
-                temp = arr[j];
-                arr[j] = arr[j+1];
-                arr[j+1] = temp;
+void bubbleSort(double* arr, int n) {
+    for (int i = 0; i < n - 1; i++) {
+        for (int j = 0; j < n - i - 1; j++) {
+            if (arr[j] > arr[j + 1]) {
+                exchangeElements(&arr[j], &arr[j + 1]);
             }
         }
     }
 }
 
-void parallel_bubble_sort(int *arr, int n) {
-    int phase, i, temp;
-    for (phase = 0; phase < n; phase++) {
-        if (phase % 2 == 0) {
-            #pragma omp parallel for private(i, temp)
-            for (i = 0; i < n/2; i++) {
-                int left = 2*i;
-                int right = 2*i + 1;
-                if (right < n && arr[left] > arr[right]) {
-                    temp = arr[left];
-                    arr[left] = arr[right];
-                    arr[right] = temp;
-                }
-            }
-        } else {
-            #pragma omp parallel for private(i, temp)
-            for (i = 0; i < (n-1)/2; i++) {
-                int left = 2*i + 1;
-                int right = 2*i + 2;
-                if (right < n && arr[left] > arr[right]) {
-                    temp = arr[left];
-                    arr[left] = arr[right];
-                    arr[right] = temp;
-                }
-            }
-        }
+void merge(double* arr1, int n1, double* arr2, int n2, double* result) {
+    int i = 0, j = 0, k = 0;
+    while (i < n1 && j < n2) {
+        result[k++] = (arr1[i] < arr2[j]) ? arr1[i++] : arr2[j++];
     }
+    while (i < n1) result[k++] = arr1[i++];
+    while (j < n2) result[k++] = arr2[j++];
 }
 
-int main() {
-    int n = 200000;
-    int *arr_seq = malloc(n * sizeof(int));
-    int *arr_parallel = malloc(n * sizeof(int));
+int main(int argc, char* argv[]) {
+    MPI_Init(&argc, &argv);
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    for (int i = 0; i < n; i++) {
-        arr_seq[i] = arr_parallel[i] = rand();
-    }
+    int elementCount = 100000;
 
-    struct timeval start_seq, end_seq;
-    gettimeofday(&start_seq, NULL);
-    bubble_sort(arr_seq, n);
-    gettimeofday(&end_seq, NULL);
-    double time_seq = (end_seq.tv_sec - start_seq.tv_sec) +
-                      (end_seq.tv_usec - start_seq.tv_usec)/1e6;
-    printf("Sequential time: %.6f seconds\n", time_seq);
-
-    if (!is_sorted(arr_seq, n)) {
-        printf("Sequential sort failed!\n");
-    }
-
-    struct timeval start_par, end_par;
-    gettimeofday(&start_par, NULL);
-    parallel_bubble_sort(arr_parallel, n);
-    gettimeofday(&end_par, NULL);
-    double time_par = (end_par.tv_sec - start_par.tv_sec) +
-                      (end_par.tv_usec - start_par.tv_usec)/1e6;
-    printf("Parallel time: %.6f seconds\n", time_par);
-
-    if (!is_sorted(arr_parallel, n)) {
-        printf("Parallel sort failed!\n");
-    }
-
-    for (int i = 0; i < n; i++) {
-        if (arr_seq[i] != arr_parallel[i]) {
-            printf("Mismatch at index %d\n", i);
-            break;
+    if (rank == 0) {
+        printf("2. MPI Bubble (Odd-Even) Sort\n");
+        int userOption;
+        while ((userOption = getopt(argc, argv, "n:")) != -1) {
+            if (userOption == 'n') {
+                elementCount = atoi(optarg);
+            }
+        }
+        if (elementCount <= 0) {
+            fprintf(stderr, "Invalid value: Element count must be positive\n");
+            MPI_Abort(MPI_COMM_WORLD, 1);
         }
     }
 
-    free(arr_seq);
-    free(arr_parallel);
-    return 0;
+    MPI_Bcast(&elementCount, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+    if (elementCount % size != 0) {
+        if (rank == 0) fprintf(stderr, "Element count must be divisible by number of processes.\n");
+        MPI_Finalize();
+        return 1;
+    }
+
+    int local_n = elementCount / size;
+    double* global_array = NULL;
+    double* local_array = malloc(local_n * sizeof(double));
+
+    if (rank == 0) {
+        global_array = malloc(elementCount * sizeof(double));
+        double* seq_array = malloc(elementCount * sizeof(double));
+        srand((unsigned)(time(NULL)));
+        for (int i = 0; i < elementCount; i++) {
+            double randomValue = (double)rand() / RAND_MAX * 1000.0;
+            global_array[i] = seq_array[i] = randomValue;
+        }
+
+        double seqStart = MPI_Wtime();
+        bubbleSort(seq_array, elementCount);
+        double seqDuration = MPI_Wtime() - seqStart;
+        printf("Sequential time: %.5f s\n", seqDuration);
+        free(seq_array);
+    }
+
+    double parStart = MPI_Wtime();
+
+    MPI_Scatter(global_array, local_n, MPI_DOUBLE, local_array, local_n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+    double* received_array = malloc(local_n * sizeof(double));
+    double* merged_array = malloc(2 * local_n * sizeof(double));
+
+    for (int phase = 0; phase < size; phase++) {
+        bubbleSort(local_array, local_n);
+
+        int partner;
+        if ((phase % 2) == 0) { 
+            if ((rank % 2) == 0) {
+                partner = rank + 1;
+            }
+            else { 
+                partner = rank - 1;
+            }
+        }
+        else {
+            if ((rank % 2) != 0) {
+                partner = rank + 1;
+            }
+            else {
+                partner = rank - 1;
+            }
+        }
+
+        if (partner < 0 || partner >= size) continue;
+
+        MPI_Sendrecv(local_array, local_n, MPI_DOUBLE, partner, 0,
+            received_array, local_n, MPI_DOUBLE, partner, 0,
+            MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+        merge(local_array, local_n, received_array, local_n, merged_array);
+
+        if (rank < partner) { 
+            for (int i = 0; i < local_n; ++i) local_array[i] = merged_array[i];
+        }
+        else { 
+            for (int i = 0; i < local_n; ++i) local_array[i] = merged_array[i + local_n];
+        }
+    }
+
+    free(received_array);
+    free(merged_array);
+
+    MPI_Gather(local_array, local_n, MPI_DOUBLE, global_array, local_n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+    double parDuration = MPI_Wtime() - parStart;
+
+    if (rank == 0) {
+        printf("Parallel time:   %.5f s\n", parDuration);
+        free(global_array);
+    }
+    free(local_array);
+
+    MPI_Finalize();
+    return EXIT_SUCCESS;
 }
