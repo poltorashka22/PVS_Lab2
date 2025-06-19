@@ -1,6 +1,4 @@
-//
-// Created by demorgan on 31.05.2025.
-//
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
